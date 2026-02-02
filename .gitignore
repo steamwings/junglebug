@@ -1,2 +1,6 @@
 samples/
 tmp/
+node_modules/
+
+# Allow easily copying the lasted built JS
+#dist/

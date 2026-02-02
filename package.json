@@ -1,0 +1,13 @@
+{
+  "name": "junglebug",
+  "version": "1.0.0",
+  "description": "Amazon transaction scraper",
+  "scripts": {
+    "build": "bun build src/scraper.ts --outfile=dist/scrape-transactions.js",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "linkedom": "^0.16.11"
+  }
+}

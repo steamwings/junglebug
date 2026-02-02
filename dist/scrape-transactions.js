@@ -13,6 +13,7 @@ function extractOrderLinksFromTransactionsPage(doc) {
       let transactionDate = "";
       let transactionAmount = "";
       let paymentMethod = "";
+      let merchantType = "";
       if (container) {
         const amountEl = container.querySelector(".a-size-base-plus.a-text-bold");
         if (amountEl) {
@@ -22,6 +23,13 @@ function extractOrderLinksFromTransactionsPage(doc) {
         if (paymentEl) {
           paymentMethod = paymentEl.textContent?.trim() || "";
         }
+        const merchantSpans = container.querySelectorAll(".a-column.a-span12 .a-size-base");
+        merchantSpans.forEach((span) => {
+          const spanText = span.textContent?.trim() || "";
+          if (spanText && !spanText.startsWith("Order #") && !spanText.startsWith("Refund:")) {
+            merchantType = spanText;
+          }
+        });
         let prevElement = container.parentElement;
         while (prevElement) {
           const dateContainer = prevElement.querySelector(".apx-transaction-date-container span");
@@ -38,7 +46,8 @@ function extractOrderLinksFromTransactionsPage(doc) {
         orderText: text,
         transactionDate,
         transactionAmount,
-        paymentMethod
+        paymentMethod,
+        merchantType
       });
     }
   });
@@ -98,15 +107,108 @@ function parseHtml(html) {
   const parser = new DOMParser;
   return parser.parseFromString(html, "text/html");
 }
+function extractItemsPageUrl(doc) {
+  const links = doc.querySelectorAll("a.a-link-normal");
+  for (const link of links) {
+    const text = link.textContent?.trim().toLowerCase() || "";
+    if (text.includes("view all items") || text.includes("view items")) {
+      return link.href || null;
+    }
+  }
+  return null;
+}
+function parseItemsPage(doc, orderId) {
+  const items = [];
+  const productLinks = doc.querySelectorAll('a[href*="/dp/"]');
+  productLinks.forEach((link) => {
+    const anchor = link;
+    const itemUrl = anchor.href || "";
+    const asinMatch = itemUrl.match(/\/dp\/([A-Z0-9]+)/i);
+    const asin = asinMatch ? asinMatch[1] : "";
+    let itemName = anchor.textContent?.trim() || "";
+    if (!itemName) {
+      const img = anchor.querySelector("img[alt]");
+      if (img) {
+        itemName = img.getAttribute("alt") || "";
+      }
+    }
+    if (!itemName || !asin) {
+      return;
+    }
+    if (items.some((item) => item.asin === asin)) {
+      return;
+    }
+    const itemPrice = "";
+    items.push({
+      itemName,
+      itemPrice,
+      itemUrl,
+      asin
+    });
+  });
+  return {
+    orderId,
+    orderPlacedDate: "",
+    orderTotal: "",
+    items
+  };
+}
+
+// src/transaction-types.ts
+var TRANSACTION_TYPES = {
+  "Amazon Tips": {
+    itemSource: "skip",
+    description: "Delivery tips - order details appear in main transaction"
+  },
+  "Amazon Grocery": {
+    itemSource: "items-page",
+    description: "Amazon Grocery - items on separate page"
+  }
+};
+var KNOWN_MERCHANT_TYPES = new Set([
+  "AMZN Mktp US",
+  "Amazon.com",
+  "Prime Video Channels",
+  "Audible",
+  "Amazon Tips",
+  "Amazon Grocery"
+]);
+function getTransactionTypeConfig(merchantName) {
+  const normalized = merchantName.trim();
+  if (normalized in TRANSACTION_TYPES) {
+    return TRANSACTION_TYPES[normalized];
+  }
+  const lowerName = normalized.toLowerCase();
+  for (const [key, config] of Object.entries(TRANSACTION_TYPES)) {
+    if (key.toLowerCase() === lowerName) {
+      return config;
+    }
+  }
+  if (normalized && !KNOWN_MERCHANT_TYPES.has(normalized)) {
+    console.warn(`Unknown merchant type: "${normalized}" - using default (order-details)`);
+  }
+  return {
+    itemSource: "order-details",
+    description: normalized || "Unknown merchant type"
+  };
+}
+function shouldSkipOrderDetails(merchantName) {
+  const config = getTransactionTypeConfig(merchantName);
+  return config.itemSource === "skip";
+}
+function needsItemsPage(merchantName) {
+  const config = getTransactionTypeConfig(merchantName);
+  return config.itemSource === "items-page";
+}
 
 // src/scraper.ts
 var DELAY_BETWEEN_REQUESTS = 1000;
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-async function fetchOrderDetails(orderUrl) {
+async function fetchPage(url) {
   try {
-    const response = await fetch(orderUrl, {
+    const response = await fetch(url, {
       credentials: "include",
       headers: {
         Accept: "text/html"
@@ -117,7 +219,7 @@ async function fetchOrderDetails(orderUrl) {
     }
     return await response.text();
   } catch (error) {
-    console.error(`Failed to fetch ${orderUrl}:`, error);
+    console.error(`Failed to fetch ${url}:`, error);
     return null;
   }
 }
@@ -129,28 +231,85 @@ async function scrapeAmazonTransactions() {
   const results = [];
   for (let i = 0;i < orderLinks.length; i++) {
     const order = orderLinks[i];
-    console.log(`Processing ${i + 1}/${orderLinks.length}: Order ${order.orderId}`);
-    const html = await fetchOrderDetails(order.orderUrl);
-    if (html) {
-      const doc = parseHtml(html);
-      const orderDetails = parseOrderDetailsPage(doc, order.orderId);
-      results.push({
-        ...order,
-        ...orderDetails
-      });
-      console.log(`  Found ${orderDetails.items.length} item(s)`);
-      orderDetails.items.forEach((item, idx) => {
-        console.log(`    ${idx + 1}. ${item.itemName.substring(0, 50)}... - ${item.itemPrice}`);
-      });
-    } else {
+    const config = getTransactionTypeConfig(order.merchantType);
+    console.log(`Processing ${i + 1}/${orderLinks.length}: Order ${order.orderId} (${order.merchantType || "unknown"})`);
+    if (shouldSkipOrderDetails(order.merchantType)) {
+      console.log(`  Skipping: ${config.description}`);
       results.push({
         ...order,
         orderId: order.orderId,
         orderPlacedDate: "",
         orderTotal: "",
-        items: [],
-        error: "Failed to fetch order details"
+        items: []
       });
+    } else if (needsItemsPage(order.merchantType)) {
+      console.log(`  Fetching items page: ${config.description}`);
+      const detailsHtml = await fetchPage(order.orderUrl);
+      if (detailsHtml) {
+        const detailsDoc = parseHtml(detailsHtml);
+        const itemsPageUrl = extractItemsPageUrl(detailsDoc);
+        if (itemsPageUrl) {
+          await sleep(DELAY_BETWEEN_REQUESTS);
+          const itemsHtml = await fetchPage(itemsPageUrl);
+          if (itemsHtml) {
+            const itemsDoc = parseHtml(itemsHtml);
+            const orderDetails = parseItemsPage(itemsDoc, order.orderId);
+            results.push({
+              ...order,
+              ...orderDetails
+            });
+            console.log(`  Found ${orderDetails.items.length} item(s) from items page`);
+          } else {
+            results.push({
+              ...order,
+              orderId: order.orderId,
+              orderPlacedDate: "",
+              orderTotal: "",
+              items: [],
+              error: "Failed to fetch items page"
+            });
+          }
+        } else {
+          const orderDetails = parseOrderDetailsPage(detailsDoc, order.orderId);
+          results.push({
+            ...order,
+            ...orderDetails
+          });
+          console.log(`  Found ${orderDetails.items.length} item(s) from details page`);
+        }
+      } else {
+        results.push({
+          ...order,
+          orderId: order.orderId,
+          orderPlacedDate: "",
+          orderTotal: "",
+          items: [],
+          error: "Failed to fetch order details"
+        });
+      }
+    } else {
+      const html = await fetchPage(order.orderUrl);
+      if (html) {
+        const doc = parseHtml(html);
+        const orderDetails = parseOrderDetailsPage(doc, order.orderId);
+        results.push({
+          ...order,
+          ...orderDetails
+        });
+        console.log(`  Found ${orderDetails.items.length} item(s)`);
+        orderDetails.items.forEach((item, idx) => {
+          console.log(`    ${idx + 1}. ${item.itemName.substring(0, 50)}... - ${item.itemPrice}`);
+        });
+      } else {
+        results.push({
+          ...order,
+          orderId: order.orderId,
+          orderPlacedDate: "",
+          orderTotal: "",
+          items: [],
+          error: "Failed to fetch order details"
+        });
+      }
     }
     if (i < orderLinks.length - 1) {
       await sleep(DELAY_BETWEEN_REQUESTS);
@@ -167,12 +326,17 @@ async function scrapeAmazonTransactions() {
     console.log(`Order: ${r.orderId}`);
     console.log(`  Date: ${r.transactionDate}`);
     console.log(`  Amount: ${r.transactionAmount}`);
+    console.log(`  Merchant: ${r.merchantType}`);
     console.log(`  Payment: ${r.paymentMethod}`);
-    console.log(`  Items:`);
-    (r.items || []).forEach((item) => {
-      console.log(`    - ${item.itemName}`);
-      console.log(`      Price: ${item.itemPrice}`);
-    });
+    if (r.items && r.items.length > 0) {
+      console.log(`  Items:`);
+      r.items.forEach((item) => {
+        console.log(`    - ${item.itemName}`);
+        if (item.itemPrice) {
+          console.log(`      Price: ${item.itemPrice}`);
+        }
+      });
+    }
     console.log("");
   });
   const jsonOutput = JSON.stringify(results, null, 2);

@@ -142,9 +142,14 @@ function createTransactionsPageHtml(): string {
             <div class="a-column a-span3">
               <span class="a-size-base-plus a-text-bold">-$156.99</span>
             </div>
-            <a class="a-link-normal" href="https://www.amazon.com/gp/css/order-details?orderID=111-2223334-4445556">
-              Order #111-2223334-4445556
-            </a>
+            <div class="a-column a-span12">
+              <a class="a-link-normal" href="https://www.amazon.com/gp/css/order-details?orderID=111-2223334-4445556">
+                Order #111-2223334-4445556
+              </a>
+            </div>
+            <div class="a-column a-span12">
+              <span class="a-size-base">AMZN Mktp US</span>
+            </div>
           </div>
         </div>
 
@@ -162,9 +167,14 @@ function createTransactionsPageHtml(): string {
             <div class="a-column a-span3">
               <span class="a-size-base-plus a-text-bold">-$42.50</span>
             </div>
-            <a class="a-link-normal" href="https://www.amazon.com/gp/css/order-details?orderID=222-3334445-5556667">
-              Order #222-3334445-5556667
-            </a>
+            <div class="a-column a-span12">
+              <a class="a-link-normal" href="https://www.amazon.com/gp/css/order-details?orderID=222-3334445-5556667">
+                Order #222-3334445-5556667
+              </a>
+            </div>
+            <div class="a-column a-span12">
+              <span class="a-size-base">Amazon.com</span>
+            </div>
           </div>
         </div>
 
@@ -176,9 +186,14 @@ function createTransactionsPageHtml(): string {
             <div class="a-column a-span3">
               <span class="a-size-base-plus a-text-bold">-$19.99</span>
             </div>
-            <a class="a-link-normal" href="https://www.amazon.com/gp/css/order-details?orderID=333-4445556-6667778">
-              Order #333-4445556-6667778
-            </a>
+            <div class="a-column a-span12">
+              <a class="a-link-normal" href="https://www.amazon.com/gp/css/order-details?orderID=333-4445556-6667778">
+                Order #333-4445556-6667778
+              </a>
+            </div>
+            <div class="a-column a-span12">
+              <span class="a-size-base">Amazon Fresh</span>
+            </div>
           </div>
         </div>
       </div>
@@ -404,6 +419,16 @@ describe('extractOrderLinksFromTransactionsPage', () => {
     expect(paymentMethods).toContain('Visa ****1234');
   });
 
+  it('should extract merchant types', () => {
+    const doc = createDocument(createTransactionsPageHtml());
+    const result = extractOrderLinksFromTransactionsPage(doc);
+
+    const merchantTypes = result.map(link => link.merchantType);
+    expect(merchantTypes).toContain('AMZN Mktp US');
+    expect(merchantTypes).toContain('Amazon.com');
+    expect(merchantTypes).toContain('Amazon Fresh');
+  });
+
   it('should extract order URLs', () => {
     const doc = createDocument(createTransactionsPageHtml());
     const result = extractOrderLinksFromTransactionsPage(doc);
@@ -486,6 +511,89 @@ describe('integration scenarios', () => {
       expect(item.itemName).toBeTruthy();
       expect(item.itemUrl).toBeTruthy();
       expect(item.asin).toBeTruthy();
+    });
+  });
+});
+
+// ============================================================================
+// Transaction Types Tests
+// ============================================================================
+
+import {
+  getTransactionTypeConfig,
+  shouldSkipOrderDetails,
+  needsItemsPage,
+} from '../src/transaction-types';
+
+describe('transaction-types', () => {
+  describe('getTransactionTypeConfig', () => {
+    it('should return order-details for standard merchant types', () => {
+      expect(getTransactionTypeConfig('AMZN Mktp US').itemSource).toBe('order-details');
+      expect(getTransactionTypeConfig('Amazon.com').itemSource).toBe('order-details');
+      expect(getTransactionTypeConfig('Prime Video Channels').itemSource).toBe('order-details');
+      expect(getTransactionTypeConfig('Audible').itemSource).toBe('order-details');
+    });
+
+    it('should return skip for Amazon Tips', () => {
+      expect(getTransactionTypeConfig('Amazon Tips').itemSource).toBe('skip');
+    });
+
+    it('should return items-page for Amazon Grocery', () => {
+      expect(getTransactionTypeConfig('Amazon Grocery').itemSource).toBe('items-page');
+    });
+
+    it('should return order-details for unknown merchant types', () => {
+      const config = getTransactionTypeConfig('Unknown Seller XYZ');
+      expect(config.itemSource).toBe('order-details');
+    });
+
+    it('should use merchant name as description for unknown types', () => {
+      const config = getTransactionTypeConfig('Some New Merchant');
+      expect(config.description).toBe('Some New Merchant');
+    });
+
+    it('should trim whitespace', () => {
+      const config = getTransactionTypeConfig('  Amazon.com  ');
+      expect(config.itemSource).toBe('order-details');
+    });
+
+    it('should handle empty merchant type (e.g., ExternallyManagedPayment)', () => {
+      const config = getTransactionTypeConfig('');
+      expect(config.itemSource).toBe('order-details');
+    });
+  });
+
+  describe('shouldSkipOrderDetails', () => {
+    it('should return true for Amazon Tips', () => {
+      expect(shouldSkipOrderDetails('Amazon Tips')).toBe(true);
+    });
+
+    it('should return false for standard merchant types', () => {
+      expect(shouldSkipOrderDetails('AMZN Mktp US')).toBe(false);
+      expect(shouldSkipOrderDetails('Amazon.com')).toBe(false);
+      expect(shouldSkipOrderDetails('Prime Video Channels')).toBe(false);
+      expect(shouldSkipOrderDetails('Audible')).toBe(false);
+    });
+
+    it('should return false for unknown merchant types', () => {
+      expect(shouldSkipOrderDetails('Unknown Type')).toBe(false);
+    });
+  });
+
+  describe('needsItemsPage', () => {
+    it('should return true for Amazon Grocery', () => {
+      expect(needsItemsPage('Amazon Grocery')).toBe(true);
+    });
+
+    it('should return false for standard merchant types', () => {
+      expect(needsItemsPage('AMZN Mktp US')).toBe(false);
+      expect(needsItemsPage('Amazon.com')).toBe(false);
+      expect(needsItemsPage('Prime Video Channels')).toBe(false);
+      expect(needsItemsPage('Audible')).toBe(false);
+    });
+
+    it('should return false for unknown merchant types', () => {
+      expect(needsItemsPage('Unknown Type')).toBe(false);
     });
   });
 });

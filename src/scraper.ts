@@ -7,10 +7,17 @@
 import {
   extractOrderLinksFromTransactionsPage,
   parseOrderDetailsPage,
+  parseItemsPage,
+  extractItemsPageUrl,
   parseHtml,
   ScrapedOrder,
-  OrderLink
 } from './parser';
+
+import {
+  getTransactionTypeConfig,
+  shouldSkipOrderDetails,
+  needsItemsPage,
+} from './transaction-types';
 
 const DELAY_BETWEEN_REQUESTS = 1000; // ms delay to avoid rate limiting
 
@@ -18,9 +25,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fetchOrderDetails(orderUrl: string): Promise<string | null> {
+async function fetchPage(url: string): Promise<string | null> {
   try {
-    const response = await fetch(orderUrl, {
+    const response = await fetch(url, {
       credentials: 'include',
       headers: {
         'Accept': 'text/html'
@@ -33,7 +40,7 @@ async function fetchOrderDetails(orderUrl: string): Promise<string | null> {
 
     return await response.text();
   } catch (error) {
-    console.error(`Failed to fetch ${orderUrl}:`, error);
+    console.error(`Failed to fetch ${url}:`, error);
     return null;
   }
 }
@@ -49,32 +56,101 @@ async function scrapeAmazonTransactions(): Promise<ScrapedOrder[]> {
 
   for (let i = 0; i < orderLinks.length; i++) {
     const order = orderLinks[i];
-    console.log(`Processing ${i + 1}/${orderLinks.length}: Order ${order.orderId}`);
+    const config = getTransactionTypeConfig(order.merchantType);
 
-    const html = await fetchOrderDetails(order.orderUrl);
+    console.log(`Processing ${i + 1}/${orderLinks.length}: Order ${order.orderId} (${order.merchantType || 'unknown'})`);
 
-    if (html) {
-      const doc = parseHtml(html);
-      const orderDetails = parseOrderDetailsPage(doc, order.orderId);
-
-      results.push({
-        ...order,
-        ...orderDetails
-      });
-
-      console.log(`  Found ${orderDetails.items.length} item(s)`);
-      orderDetails.items.forEach((item, idx) => {
-        console.log(`    ${idx + 1}. ${item.itemName.substring(0, 50)}... - ${item.itemPrice}`);
-      });
-    } else {
+    // Handle based on transaction type
+    if (shouldSkipOrderDetails(order.merchantType)) {
+      // Skip fetching details (e.g., tips - the order appears elsewhere)
+      console.log(`  Skipping: ${config.description}`);
       results.push({
         ...order,
         orderId: order.orderId,
         orderPlacedDate: '',
         orderTotal: '',
         items: [],
-        error: 'Failed to fetch order details'
       });
+    } else if (needsItemsPage(order.merchantType)) {
+      // Need to fetch order details, then items page (e.g., grocery orders)
+      console.log(`  Fetching items page: ${config.description}`);
+
+      const detailsHtml = await fetchPage(order.orderUrl);
+      if (detailsHtml) {
+        const detailsDoc = parseHtml(detailsHtml);
+        const itemsPageUrl = extractItemsPageUrl(detailsDoc);
+
+        if (itemsPageUrl) {
+          await sleep(DELAY_BETWEEN_REQUESTS);
+          const itemsHtml = await fetchPage(itemsPageUrl);
+
+          if (itemsHtml) {
+            const itemsDoc = parseHtml(itemsHtml);
+            const orderDetails = parseItemsPage(itemsDoc, order.orderId);
+
+            results.push({
+              ...order,
+              ...orderDetails
+            });
+
+            console.log(`  Found ${orderDetails.items.length} item(s) from items page`);
+          } else {
+            results.push({
+              ...order,
+              orderId: order.orderId,
+              orderPlacedDate: '',
+              orderTotal: '',
+              items: [],
+              error: 'Failed to fetch items page'
+            });
+          }
+        } else {
+          // No items page link found, try parsing details page directly
+          const orderDetails = parseOrderDetailsPage(detailsDoc, order.orderId);
+          results.push({
+            ...order,
+            ...orderDetails
+          });
+
+          console.log(`  Found ${orderDetails.items.length} item(s) from details page`);
+        }
+      } else {
+        results.push({
+          ...order,
+          orderId: order.orderId,
+          orderPlacedDate: '',
+          orderTotal: '',
+          items: [],
+          error: 'Failed to fetch order details'
+        });
+      }
+    } else {
+      // Standard order - fetch order details page
+      const html = await fetchPage(order.orderUrl);
+
+      if (html) {
+        const doc = parseHtml(html);
+        const orderDetails = parseOrderDetailsPage(doc, order.orderId);
+
+        results.push({
+          ...order,
+          ...orderDetails
+        });
+
+        console.log(`  Found ${orderDetails.items.length} item(s)`);
+        orderDetails.items.forEach((item, idx) => {
+          console.log(`    ${idx + 1}. ${item.itemName.substring(0, 50)}... - ${item.itemPrice}`);
+        });
+      } else {
+        results.push({
+          ...order,
+          orderId: order.orderId,
+          orderPlacedDate: '',
+          orderTotal: '',
+          items: [],
+          error: 'Failed to fetch order details'
+        });
+      }
     }
 
     // Delay between requests to be nice to Amazon's servers
@@ -93,12 +169,17 @@ async function scrapeAmazonTransactions(): Promise<ScrapedOrder[]> {
     console.log(`Order: ${r.orderId}`);
     console.log(`  Date: ${r.transactionDate}`);
     console.log(`  Amount: ${r.transactionAmount}`);
+    console.log(`  Merchant: ${r.merchantType}`);
     console.log(`  Payment: ${r.paymentMethod}`);
-    console.log(`  Items:`);
-    (r.items || []).forEach(item => {
-      console.log(`    - ${item.itemName}`);
-      console.log(`      Price: ${item.itemPrice}`);
-    });
+    if (r.items && r.items.length > 0) {
+      console.log(`  Items:`);
+      r.items.forEach(item => {
+        console.log(`    - ${item.itemName}`);
+        if (item.itemPrice) {
+          console.log(`      Price: ${item.itemPrice}`);
+        }
+      });
+    }
     console.log('');
   });
 

@@ -10,6 +10,7 @@ export interface OrderLink {
   transactionDate: string;
   transactionAmount: string;
   paymentMethod: string;
+  merchantType: string;
 }
 
 export interface OrderItem {
@@ -55,6 +56,7 @@ export function extractOrderLinksFromTransactionsPage(doc: Document): OrderLink[
       let transactionDate = '';
       let transactionAmount = '';
       let paymentMethod = '';
+      let merchantType = '';
 
       if (container) {
         // Get amount from this transaction
@@ -68,6 +70,17 @@ export function extractOrderLinksFromTransactionsPage(doc: Document): OrderLink[
         if (paymentEl) {
           paymentMethod = paymentEl.textContent?.trim() || '';
         }
+
+        // Get merchant type (appears after the order link in a span)
+        // Structure: <div class="a-column a-span12"><span class="a-size-base">MERCHANT TYPE</span></div>
+        const merchantSpans = container.querySelectorAll('.a-column.a-span12 .a-size-base');
+        merchantSpans.forEach(span => {
+          const spanText = span.textContent?.trim() || '';
+          // Skip if it looks like an order link text
+          if (spanText && !spanText.startsWith('Order #') && !spanText.startsWith('Refund:')) {
+            merchantType = spanText;
+          }
+        });
 
         // Find the date by looking backwards through siblings
         let prevElement = container.parentElement;
@@ -87,7 +100,8 @@ export function extractOrderLinksFromTransactionsPage(doc: Document): OrderLink[
         orderText: text,
         transactionDate,
         transactionAmount,
-        paymentMethod
+        paymentMethod,
+        merchantType
       });
     }
   });
@@ -182,4 +196,82 @@ export function parseOrderDetailsPage(doc: Document, orderId: string): OrderDeta
 export function parseHtml(html: string): Document {
   const parser = new DOMParser();
   return parser.parseFromString(html, 'text/html');
+}
+
+/**
+ * Extract the "View all items" link from an order details page.
+ * Used for grocery orders where items aren't shown on the main details page.
+ * @param doc - The Document object of the order details page
+ * @returns The URL to the items page, or null if not found
+ */
+export function extractItemsPageUrl(doc: Document): string | null {
+  // Look for "View all items" or similar links
+  const links = doc.querySelectorAll('a.a-link-normal');
+  for (const link of links) {
+    const text = link.textContent?.trim().toLowerCase() || '';
+    if (text.includes('view all items') || text.includes('view items')) {
+      return (link as HTMLAnchorElement).href || null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse an Amazon items page (used for grocery orders).
+ * @param doc - The Document object of the items page
+ * @param orderId - The order ID being parsed
+ * @returns Order details including items
+ */
+export function parseItemsPage(doc: Document, orderId: string): OrderDetails {
+  const items: OrderItem[] = [];
+
+  // Items page has product links with /dp/ in the URL
+  const productLinks = doc.querySelectorAll('a[href*="/dp/"]');
+
+  productLinks.forEach(link => {
+    const anchor = link as HTMLAnchorElement;
+    const itemUrl = anchor.href || '';
+
+    // Extract ASIN from URL
+    const asinMatch = itemUrl.match(/\/dp\/([A-Z0-9]+)/i);
+    const asin = asinMatch ? asinMatch[1] : '';
+
+    // Get item name from link text or nearby alt text
+    let itemName = anchor.textContent?.trim() || '';
+
+    // If link text is empty, try to find an image with alt text
+    if (!itemName) {
+      const img = anchor.querySelector('img[alt]');
+      if (img) {
+        itemName = img.getAttribute('alt') || '';
+      }
+    }
+
+    // Skip if no name or ASIN (likely navigation links)
+    if (!itemName || !asin) {
+      return;
+    }
+
+    // Avoid duplicates (same ASIN)
+    if (items.some(item => item.asin === asin)) {
+      return;
+    }
+
+    // Try to find price near this item (grocery items may not have individual prices)
+    const itemPrice = '';
+
+    items.push({
+      itemName,
+      itemPrice,
+      itemUrl,
+      asin
+    });
+  });
+
+  return {
+    orderId,
+    orderPlacedDate: '',
+    orderTotal: '',
+    items
+  };
 }

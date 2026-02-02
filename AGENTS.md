@@ -2,10 +2,20 @@
 
 Browser console script for scraping Amazon transaction history.
 
-## Files
+## Project Structure
 
-- `scrape-transactions.js` - Main script to run in browser console
-- `samples/` - Sample HTML files for testing selectors
+- `src/parser.ts` - Core parsing functions (tested)
+- `src/scraper.ts` - Browser entry point, imports parser
+- `tests/parser.test.ts` - Tests with fake data fixtures
+- `dist/scrape-transactions.js` - Built browser script (committed)
+- `samples/` - Sample HTML files for developing selectors (gitignored)
+
+## Commands
+
+```bash
+bun test        # Run tests
+bun run build   # Build browser script to dist/
+```
 
 ## Key Selectors
 
@@ -15,6 +25,7 @@ Browser console script for scraping Amazon transaction history.
 - Transaction date: `.apx-transaction-date-container span`
 
 **Order details page:**
+- Item container: `[data-component="purchasedItems"]`
 - Item title: `[data-component="itemTitle"] a.a-link-normal`
 - Item price: `.a-price .a-offscreen`
-- Order ID: `[data-component="orderId"] span`
+- ASIN: extracted from item URL `/dp/{ASIN}`

@@ -1,15 +1,14 @@
-import { JSDOM } from 'jsdom';
+import { describe, it, expect } from 'bun:test';
+import { parseHTML } from 'linkedom';
 import {
   extractOrderLinksFromTransactionsPage,
   parseOrderDetailsPage,
-  OrderLink,
-  OrderDetails
 } from '../src/parser';
 
 // Helper to create a DOM document from HTML string
 function createDocument(html: string): Document {
-  const dom = new JSDOM(html);
-  return dom.window.document;
+  const { document } = parseHTML(html);
+  return document;
 }
 
 // ============================================================================

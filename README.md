@@ -2,7 +2,7 @@
 
 A browser console script for customers that scrapes your Amazon transaction history and fetches item details from each order.
 
-## Usage
+## Usage (NO INSTALL REQUIRED)
 
 1. Navigate to https://www.amazon.com/cpe/yourpayments/transactions
 2. Open browser DevTools (F12 or Cmd+Option+I on Mac)
@@ -10,7 +10,7 @@ A browser console script for customers that scrapes your Amazon transaction hist
 4. Press Enter and wait for processing to complete
 5. Hit "Next Page" and run the script again if needed.
 
-## Output
+### Output
 
 Results are:
 - Logged to the console as a formatted summary
@@ -23,7 +23,7 @@ If not save to your clipboard:
 - Hit `Copy Object`
 - Paste your JSON into a file
 
-### Data Structure
+You should see objects like this for each order:
 
 ```javascript
 {
@@ -43,8 +43,19 @@ If not save to your clipboard:
 }
 ```
 
-## Notes
+### Notes
 
 - The script adds a 1-second delay between requests to avoid rate limiting
 - You must be logged into Amazon for the script to work
 - Handles orders with multiple items and multiple shipping dates
+
+## Development
+
+```sh
+# bun is required. Install it with:
+# curl -fsSL https://bun.sh/install | bash
+
+bun install
+bun run build
+bun test
+```

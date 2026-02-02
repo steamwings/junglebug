@@ -6,7 +6,7 @@ A browser console script for customers that scrapes your Amazon transaction hist
 
 1. Navigate to https://www.amazon.com/cpe/yourpayments/transactions
 2. Open browser DevTools (F12 or Cmd+Option+I on Mac)
-3. Paste the contents of `dist/scrape-transactions.js` into the Console tab
+3. Paste the contents of [dist/scrape-transactions.js](./dist/scrape-transactions.js) into the Console tab
 4. Press Enter and wait for processing to complete
 5. Hit "Next Page" and run the script again if needed.
 

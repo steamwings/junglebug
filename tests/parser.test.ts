@@ -463,6 +463,29 @@ describe('extractOrderLinksFromTransactionsPage', () => {
     expect(result).toHaveLength(0);
   });
 
+  it('should return empty array for page with no transaction containers', () => {
+    // Simulates reaching the end of transaction history
+    const html = `
+      <!DOCTYPE html>
+      <html><body>
+        <div class="a-box-group">
+          <div class="a-box a-spacing-none a-box-title">
+            <span class="a-size-base a-text-bold">Completed</span>
+          </div>
+          <div class="a-box a-spacing-base">
+            <div class="a-box-inner a-padding-none">
+              <!-- No transactions here -->
+            </div>
+          </div>
+        </div>
+      </body></html>
+    `;
+    const doc = createDocument(html);
+    const result = extractOrderLinksFromTransactionsPage(doc);
+
+    expect(result).toHaveLength(0);
+  });
+
   it('should ignore links without orderID parameter', () => {
     const html = `
       <!DOCTYPE html>
@@ -594,6 +617,142 @@ describe('transaction-types', () => {
 
     it('should return false for unknown merchant types', () => {
       expect(needsItemsPage('Unknown Type')).toBe(false);
+    });
+  });
+});
+
+// ============================================================================
+// Date Utilities Tests
+// ============================================================================
+
+import {
+  parseDate,
+  normalizeToDay,
+  isOnOrBeforeDate,
+  isBeforeDate,
+  validateEndDate,
+} from '../src/date-utils';
+
+describe('date-utils', () => {
+  describe('parseDate', () => {
+    it('should parse "January 25, 2024" format', () => {
+      const date = parseDate('January 25, 2024');
+      expect(date).not.toBeNull();
+      expect(date!.getFullYear()).toBe(2024);
+      expect(date!.getMonth()).toBe(0); // January
+      expect(date!.getDate()).toBe(25);
+    });
+
+    it('should parse "December 31, 2025" format', () => {
+      const date = parseDate('December 31, 2025');
+      expect(date).not.toBeNull();
+      expect(date!.getFullYear()).toBe(2025);
+      expect(date!.getMonth()).toBe(11); // December
+      expect(date!.getDate()).toBe(31);
+    });
+
+    it('should return null for empty string', () => {
+      expect(parseDate('')).toBeNull();
+    });
+
+    it('should return null for invalid date', () => {
+      expect(parseDate('not a date')).toBeNull();
+    });
+
+    it('should return null for whitespace only', () => {
+      expect(parseDate('   ')).toBeNull();
+    });
+  });
+
+  describe('normalizeToDay', () => {
+    it('should set time to midnight', () => {
+      const date = new Date('2024-01-15T14:30:45.123Z');
+      const normalized = normalizeToDay(date);
+      expect(normalized.getHours()).toBe(0);
+      expect(normalized.getMinutes()).toBe(0);
+      expect(normalized.getSeconds()).toBe(0);
+      expect(normalized.getMilliseconds()).toBe(0);
+    });
+
+    it('should preserve the date', () => {
+      const date = new Date('2024-06-20T23:59:59.999Z');
+      const normalized = normalizeToDay(date);
+      expect(normalized.getDate()).toBe(date.getDate());
+      expect(normalized.getMonth()).toBe(date.getMonth());
+      expect(normalized.getFullYear()).toBe(date.getFullYear());
+    });
+  });
+
+  describe('isOnOrBeforeDate', () => {
+    it('should return true when transaction is before end date', () => {
+      const tx = new Date('2024-01-15');
+      const end = new Date('2024-01-20');
+      expect(isOnOrBeforeDate(tx, end)).toBe(true);
+    });
+
+    it('should return true when transaction is on end date', () => {
+      const tx = new Date('2024-01-15');
+      const end = new Date('2024-01-15');
+      expect(isOnOrBeforeDate(tx, end)).toBe(true);
+    });
+
+    it('should return false when transaction is after end date', () => {
+      const tx = new Date('2024-01-25');
+      const end = new Date('2024-01-20');
+      expect(isOnOrBeforeDate(tx, end)).toBe(false);
+    });
+  });
+
+  describe('isBeforeDate', () => {
+    it('should return true when transaction is before end date', () => {
+      const tx = new Date('2024-01-15');
+      const end = new Date('2024-01-20');
+      expect(isBeforeDate(tx, end)).toBe(true);
+    });
+
+    it('should return false when transaction is on end date', () => {
+      const tx = new Date('2024-01-15');
+      const end = new Date('2024-01-15');
+      expect(isBeforeDate(tx, end)).toBe(false);
+    });
+
+    it('should return false when transaction is after end date', () => {
+      const tx = new Date('2024-01-25');
+      const end = new Date('2024-01-20');
+      expect(isBeforeDate(tx, end)).toBe(false);
+    });
+  });
+
+  describe('validateEndDate', () => {
+    it('should return null date for undefined', () => {
+      const result = validateEndDate(undefined);
+      expect(result.date).toBeNull();
+      expect(result.error).toBeNull();
+    });
+
+    it('should return null date for null', () => {
+      const result = validateEndDate(null);
+      expect(result.date).toBeNull();
+      expect(result.error).toBeNull();
+    });
+
+    it('should parse valid date string', () => {
+      const result = validateEndDate('January 25, 2024');
+      expect(result.date).not.toBeNull();
+      expect(result.error).toBeNull();
+      expect(result.date!.getFullYear()).toBe(2024);
+    });
+
+    it('should return error for non-string', () => {
+      const result = validateEndDate(12345);
+      expect(result.date).toBeNull();
+      expect(result.error).toContain('must be a string');
+    });
+
+    it('should return error for invalid date string', () => {
+      const result = validateEndDate('not a valid date');
+      expect(result.date).toBeNull();
+      expect(result.error).toContain('Could not parse');
     });
   });
 });

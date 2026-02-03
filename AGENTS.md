@@ -7,6 +7,7 @@ Browser console script for scraping Amazon transaction history.
 - `src/parser.ts` - Core parsing functions (tested)
 - `src/scraper.ts` - Browser entry point, imports parser
 - `src/transaction-types.ts` - Merchant type configuration and handling rules
+- `src/date-utils.ts` - Date parsing and comparison utilities
 - `tests/parser.test.ts` - Tests with fake data fixtures
 - `dist/scrape-transactions.js` - Built browser script (committed)
 - `samples/` - Sample HTML files for developing selectors (gitignored)
@@ -16,6 +17,19 @@ Browser console script for scraping Amazon transaction history.
 ```bash
 bun test        # Run tests
 bun run build   # Build browser script to dist/
+```
+
+## Usage
+
+Basic usage (current page only):
+```javascript
+// Paste dist/scrape-transactions.js into browser console
+```
+
+With pagination (scrape until a specific date):
+```javascript
+window.end_date = "January 25, 2024";
+// Then paste dist/scrape-transactions.js
 ```
 
 ## Transaction Type Handling

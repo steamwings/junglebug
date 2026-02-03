@@ -201,6 +201,47 @@ function needsItemsPage(merchantName) {
   return config.itemSource === "items-page";
 }
 
+// src/date-utils.ts
+function parseDate(dateStr) {
+  if (!dateStr || !dateStr.trim()) {
+    return null;
+  }
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+}
+function normalizeToDay(date) {
+  const normalized = new Date(date);
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
+}
+function isBeforeDate(transactionDate, endDate) {
+  const txDay = normalizeToDay(transactionDate);
+  const endDay = normalizeToDay(endDate);
+  return txDay < endDay;
+}
+function validateEndDate(endDateValue) {
+  if (endDateValue === undefined || endDateValue === null) {
+    return { date: null, error: null };
+  }
+  if (typeof endDateValue !== "string") {
+    return {
+      date: null,
+      error: `end_date must be a string (got ${typeof endDateValue})`
+    };
+  }
+  const parsed = parseDate(endDateValue);
+  if (!parsed) {
+    return {
+      date: null,
+      error: `Could not parse end_date: "${endDateValue}". Use format like "January 25, 2024"`
+    };
+  }
+  return { date: parsed, error: null };
+}
+
 // src/scraper.ts
 var DELAY_BETWEEN_REQUESTS = 1000;
 function sleep(ms) {
@@ -223,98 +264,116 @@ async function fetchPage(url) {
     return null;
   }
 }
-async function scrapeAmazonTransactions() {
-  console.log("Starting Amazon Transaction Scraper...");
-  console.log("Finding order links on the transactions page...");
-  const orderLinks = extractOrderLinksFromTransactionsPage(document);
-  console.log(`Found ${orderLinks.length} transactions`);
+function getOldestTransactionDate(orderLinks) {
+  let oldest = null;
+  for (const order of orderLinks) {
+    if (!order.transactionDate)
+      continue;
+    const date = parseDate(order.transactionDate);
+    if (!date)
+      continue;
+    if (!oldest || date < oldest) {
+      oldest = date;
+    }
+  }
+  return oldest;
+}
+function clickNextPage(doc) {
+  const nextPageInput = doc.querySelector('input[name^="ppw-widgetEvent:DefaultNextPageNavigationEvent"]');
+  if (!nextPageInput) {
+    console.log("No Next Page button found");
+    return false;
+  }
+  const buttonSpan = nextPageInput.closest(".a-button");
+  if (buttonSpan?.classList.contains("a-button-disabled")) {
+    console.log("Next Page button is disabled");
+    return false;
+  }
+  console.log("Clicking Next Page...");
+  nextPageInput.click();
+  return true;
+}
+async function processOrder(order) {
+  const config = getTransactionTypeConfig(order.merchantType);
+  if (shouldSkipOrderDetails(order.merchantType)) {
+    console.log(`  Skipping: ${config.description}`);
+    return {
+      ...order,
+      orderId: order.orderId,
+      orderPlacedDate: "",
+      orderTotal: "",
+      items: []
+    };
+  }
+  if (needsItemsPage(order.merchantType)) {
+    console.log(`  Fetching items page: ${config.description}`);
+    const detailsHtml = await fetchPage(order.orderUrl);
+    if (detailsHtml) {
+      const detailsDoc = parseHtml(detailsHtml);
+      const itemsPageUrl = extractItemsPageUrl(detailsDoc);
+      if (itemsPageUrl) {
+        await sleep(DELAY_BETWEEN_REQUESTS);
+        const itemsHtml = await fetchPage(itemsPageUrl);
+        if (itemsHtml) {
+          const itemsDoc = parseHtml(itemsHtml);
+          const orderDetails2 = parseItemsPage(itemsDoc, order.orderId);
+          console.log(`  Found ${orderDetails2.items.length} item(s) from items page`);
+          return { ...order, ...orderDetails2 };
+        }
+      }
+      const orderDetails = parseOrderDetailsPage(detailsDoc, order.orderId);
+      console.log(`  Found ${orderDetails.items.length} item(s) from details page`);
+      return { ...order, ...orderDetails };
+    }
+    return {
+      ...order,
+      orderId: order.orderId,
+      orderPlacedDate: "",
+      orderTotal: "",
+      items: [],
+      error: "Failed to fetch order details"
+    };
+  }
+  const html = await fetchPage(order.orderUrl);
+  if (html) {
+    const doc = parseHtml(html);
+    const orderDetails = parseOrderDetailsPage(doc, order.orderId);
+    console.log(`  Found ${orderDetails.items.length} item(s)`);
+    orderDetails.items.forEach((item, idx) => {
+      console.log(`    ${idx + 1}. ${item.itemName.substring(0, 50)}... - ${item.itemPrice}`);
+    });
+    return { ...order, ...orderDetails };
+  }
+  return {
+    ...order,
+    orderId: order.orderId,
+    orderPlacedDate: "",
+    orderTotal: "",
+    items: [],
+    error: "Failed to fetch order details"
+  };
+}
+async function processCurrentPage(orderLinks, endDate) {
   const results = [];
   for (let i = 0;i < orderLinks.length; i++) {
     const order = orderLinks[i];
-    const config = getTransactionTypeConfig(order.merchantType);
-    console.log(`Processing ${i + 1}/${orderLinks.length}: Order ${order.orderId} (${order.merchantType || "unknown"})`);
-    if (shouldSkipOrderDetails(order.merchantType)) {
-      console.log(`  Skipping: ${config.description}`);
-      results.push({
-        ...order,
-        orderId: order.orderId,
-        orderPlacedDate: "",
-        orderTotal: "",
-        items: []
-      });
-    } else if (needsItemsPage(order.merchantType)) {
-      console.log(`  Fetching items page: ${config.description}`);
-      const detailsHtml = await fetchPage(order.orderUrl);
-      if (detailsHtml) {
-        const detailsDoc = parseHtml(detailsHtml);
-        const itemsPageUrl = extractItemsPageUrl(detailsDoc);
-        if (itemsPageUrl) {
-          await sleep(DELAY_BETWEEN_REQUESTS);
-          const itemsHtml = await fetchPage(itemsPageUrl);
-          if (itemsHtml) {
-            const itemsDoc = parseHtml(itemsHtml);
-            const orderDetails = parseItemsPage(itemsDoc, order.orderId);
-            results.push({
-              ...order,
-              ...orderDetails
-            });
-            console.log(`  Found ${orderDetails.items.length} item(s) from items page`);
-          } else {
-            results.push({
-              ...order,
-              orderId: order.orderId,
-              orderPlacedDate: "",
-              orderTotal: "",
-              items: [],
-              error: "Failed to fetch items page"
-            });
-          }
-        } else {
-          const orderDetails = parseOrderDetailsPage(detailsDoc, order.orderId);
-          results.push({
-            ...order,
-            ...orderDetails
-          });
-          console.log(`  Found ${orderDetails.items.length} item(s) from details page`);
-        }
-      } else {
-        results.push({
-          ...order,
-          orderId: order.orderId,
-          orderPlacedDate: "",
-          orderTotal: "",
-          items: [],
-          error: "Failed to fetch order details"
-        });
-      }
-    } else {
-      const html = await fetchPage(order.orderUrl);
-      if (html) {
-        const doc = parseHtml(html);
-        const orderDetails = parseOrderDetailsPage(doc, order.orderId);
-        results.push({
-          ...order,
-          ...orderDetails
-        });
-        console.log(`  Found ${orderDetails.items.length} item(s)`);
-        orderDetails.items.forEach((item, idx) => {
-          console.log(`    ${idx + 1}. ${item.itemName.substring(0, 50)}... - ${item.itemPrice}`);
-        });
-      } else {
-        results.push({
-          ...order,
-          orderId: order.orderId,
-          orderPlacedDate: "",
-          orderTotal: "",
-          items: [],
-          error: "Failed to fetch order details"
-        });
+    if (endDate && order.transactionDate) {
+      const txDate = parseDate(order.transactionDate);
+      if (txDate && isBeforeDate(txDate, endDate)) {
+        console.log(`Transaction ${order.orderId} (${order.transactionDate}) is before end_date, stopping`);
+        return { results, shouldContinue: false };
       }
     }
+    console.log(`Processing ${i + 1}/${orderLinks.length}: Order ${order.orderId} (${order.merchantType || "unknown"})`);
+    const result = await processOrder(order);
+    results.push(result);
     if (i < orderLinks.length - 1) {
       await sleep(DELAY_BETWEEN_REQUESTS);
     }
   }
+  return { results, shouldContinue: endDate !== null };
+}
+async function outputResults(results) {
   console.log(`
 === SCRAPING COMPLETE ===
 `);
@@ -349,6 +408,56 @@ async function scrapeAmazonTransactions() {
   window.amazonTransactionResults = results;
   console.log(`
 Results also available as: window.amazonTransactionResults`);
-  return results;
+}
+async function scrapeAmazonTransactions() {
+  console.log("Starting Amazon Transaction Scraper...");
+  const { date: endDate, error: dateError } = validateEndDate(window.end_date);
+  if (dateError) {
+    console.error(`Error: ${dateError}`);
+    return [];
+  }
+  if (endDate) {
+    console.log(`Pagination enabled: will scrape until reaching ${endDate.toDateString()}`);
+  } else {
+    console.log("No end_date set: will scrape current page only");
+  }
+  const allResults = [];
+  let pageNum = 1;
+  while (true) {
+    console.log(`
+=== Page ${pageNum} ===`);
+    console.log("Finding order links on the transactions page...");
+    const orderLinks = extractOrderLinksFromTransactionsPage(document);
+    console.log(`Found ${orderLinks.length} transactions`);
+    if (orderLinks.length === 0) {
+      console.log("No transactions found on this page");
+      break;
+    }
+    const oldestDate = getOldestTransactionDate(orderLinks);
+    if (oldestDate) {
+      console.log(`Oldest transaction on this page: ${oldestDate.toDateString()}`);
+    }
+    const { results, shouldContinue } = await processCurrentPage(orderLinks, endDate);
+    allResults.push(...results);
+    if (!shouldContinue) {
+      console.log("Reached end_date or no more pages needed");
+      break;
+    }
+    console.log(`
+Need to fetch more transactions...`);
+    if (!clickNextPage(document)) {
+      console.log("Cannot navigate to next page");
+      break;
+    }
+    console.log("Waiting for next page to load...");
+    await sleep(3000);
+    pageNum++;
+    if (pageNum > 50) {
+      console.warn("Reached maximum page limit (50), stopping");
+      break;
+    }
+  }
+  await outputResults(allResults);
+  return allResults;
 }
 scrapeAmazonTransactions();

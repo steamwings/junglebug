@@ -57,21 +57,23 @@ function parseOrderDetailsPage(doc, orderId) {
   const items = [];
   const itemContainers = doc.querySelectorAll('[data-component="purchasedItems"]');
   itemContainers.forEach((container) => {
-    const titleEl = container.querySelector('[data-component="itemTitle"] a.a-link-normal');
-    const itemName = titleEl?.textContent?.trim() || "";
-    const priceEl = container.querySelector(".a-price .a-offscreen");
-    const itemPrice = priceEl?.textContent?.trim() || "";
-    const itemUrl = titleEl?.href || "";
-    const asinMatch = itemUrl.match(/\/dp\/([A-Z0-9]+)/i);
-    const asin = asinMatch ? asinMatch[1] : "";
-    if (itemName) {
-      items.push({
-        itemName,
-        itemPrice,
-        itemUrl,
-        asin
-      });
-    }
+    const titleElements = container.querySelectorAll('[data-component="itemTitle"] a.a-link-normal');
+    const priceElements = container.querySelectorAll(".a-price .a-offscreen");
+    titleElements.forEach((titleEl, index) => {
+      const itemName = titleEl.textContent?.trim() || "";
+      const itemPrice = priceElements[index]?.textContent?.trim() || "";
+      const itemUrl = titleEl.href || "";
+      const asinMatch = itemUrl.match(/\/dp\/([A-Z0-9]+)/i);
+      const asin = asinMatch ? asinMatch[1] : "";
+      if (itemName) {
+        items.push({
+          itemName,
+          itemPrice,
+          itemUrl,
+          asin
+        });
+      }
+    });
   });
   if (items.length === 0) {
     const titleElements = doc.querySelectorAll('[data-component="itemTitle"] a.a-link-normal');

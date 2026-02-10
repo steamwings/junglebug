@@ -119,6 +119,47 @@ function createEmptyOrderDetailsHtml(): string {
 }
 
 /**
+ * Generates fake HTML for an order with multiple items in a SINGLE purchasedItems container.
+ * This matches the structure seen in some Amazon order pages (e.g., order_details_2.html).
+ */
+function createMultiItemSingleContainerHtml(): string {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head><title>Order Details</title></head>
+    <body>
+      <div data-component="orderPlacedLabel">Order placed</div>
+      <div data-component="orderPlacedDate"><span>April 10, 2025</span></div>
+
+      <div data-component="purchasedItems">
+        <div data-component="itemTitle">
+          <a class="a-link-normal" href="https://www.amazon.com/dp/B0AKIT0001?ref=test">
+            Digital Kitchen Thermometer with Instant Read
+          </a>
+        </div>
+        <div class="a-price">
+          <span class="a-offscreen">$15.99</span>
+        </div>
+
+        <div data-component="itemTitle">
+          <a class="a-link-normal" href="https://www.amazon.com/dp/B0ASCALE02?ref=test">
+            Digital Food Scale for Kitchen - Stainless Steel
+          </a>
+        </div>
+        <div class="a-price">
+          <span class="a-offscreen">$12.49</span>
+        </div>
+      </div>
+
+      <div class="a-text-bold">
+        <span class="a-color-base">$30.23</span>
+      </div>
+    </body>
+    </html>
+  `;
+}
+
+/**
  * Generates fake HTML for a transactions page with multiple orders.
  */
 function createTransactionsPageHtml(): string {
@@ -299,6 +340,26 @@ describe('parseOrderDetailsPage', () => {
 
       const asins = result.items.map(item => item.asin);
       expect(asins).toEqual(['B07TEST001', 'B08SAMPLE2', 'B09MOCK003']);
+    });
+
+    it('should parse multiple items within a single purchasedItems container', () => {
+      const doc = createDocument(createMultiItemSingleContainerHtml());
+      const result = parseOrderDetailsPage(doc, 'TEST-SINGLE-CONTAINER');
+
+      expect(result.orderId).toBe('TEST-SINGLE-CONTAINER');
+      expect(result.orderPlacedDate).toBe('April 10, 2025');
+      expect(result.orderTotal).toBe('$30.23');
+      expect(result.items).toHaveLength(2);
+
+      // First item
+      expect(result.items[0].itemName).toBe('Digital Kitchen Thermometer with Instant Read');
+      expect(result.items[0].itemPrice).toBe('$15.99');
+      expect(result.items[0].asin).toBe('B0AKIT0001');
+
+      // Second item
+      expect(result.items[1].itemName).toBe('Digital Food Scale for Kitchen - Stainless Steel');
+      expect(result.items[1].itemPrice).toBe('$12.49');
+      expect(result.items[1].asin).toBe('B0ASCALE02');
     });
   });
 

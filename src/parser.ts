@@ -122,29 +122,27 @@ export function parseOrderDetailsPage(doc: Document, orderId: string): OrderDeta
   const itemContainers = doc.querySelectorAll('[data-component="purchasedItems"]');
 
   itemContainers.forEach(container => {
-    // Get item title
-    const titleEl = container.querySelector('[data-component="itemTitle"] a.a-link-normal');
-    const itemName = titleEl?.textContent?.trim() || '';
+    // Find ALL item titles within this container (some orders have multiple items per container)
+    const titleElements = container.querySelectorAll('[data-component="itemTitle"] a.a-link-normal');
+    const priceElements = container.querySelectorAll('.a-price .a-offscreen');
 
-    // Get item price - look for the price element near this item
-    const priceEl = container.querySelector('.a-price .a-offscreen');
-    const itemPrice = priceEl?.textContent?.trim() || '';
+    titleElements.forEach((titleEl, index) => {
+      const itemName = titleEl.textContent?.trim() || '';
+      const itemPrice = priceElements[index]?.textContent?.trim() || '';
+      const itemUrl = (titleEl as HTMLAnchorElement).href || '';
 
-    // Get item URL
-    const itemUrl = (titleEl as HTMLAnchorElement | null)?.href || '';
+      const asinMatch = itemUrl.match(/\/dp\/([A-Z0-9]+)/i);
+      const asin = asinMatch ? asinMatch[1] : '';
 
-    // Extract ASIN from URL if available
-    const asinMatch = itemUrl.match(/\/dp\/([A-Z0-9]+)/i);
-    const asin = asinMatch ? asinMatch[1] : '';
-
-    if (itemName) {
-      items.push({
-        itemName,
-        itemPrice,
-        itemUrl,
-        asin
-      });
-    }
+      if (itemName) {
+        items.push({
+          itemName,
+          itemPrice,
+          itemUrl,
+          asin
+        });
+      }
+    });
   });
 
   // If no items found with the component approach, try alternative selectors
